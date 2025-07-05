@@ -1,163 +1,196 @@
-from typing import Dict, Any, List, Optional
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import requests
-import logging
+from typing import Dict, Any, List, Tuple
+import yaml
 import os
 
-class NotificationManager:
-    """Manages sending notifications based on risk assessments."""
+class RiskEvaluator:
+    """Evaluates health risks based on anomaly detection results."""
     
-    def __init__(self, config: Dict[str, Any] = None):
-        self.config = config or {}
-        self.logger = logging.getLogger(__name__)
-        self._setup_logging()
+    RISK_LEVELS = {
+        'LOW': 1,
+        'MODERATE': 2,
+        'HIGH': 3,
+        'CRITICAL': 4
+    }
     
-    def _setup_logging(self):
-        """Set up logging for the notification manager."""
-        log_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            'logs'
-        )
-        os.makedirs(log_dir, exist_ok=True)
-        
-        log_file = os.path.join(log_dir, 'notifications.log')
-        
-        handler = logging.FileHandler(log_file)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        
-        self.logger.addHandler(handler)
-        self.logger.setLevel(logging.INFO)
+    def __init__(self, config_path: str = None):
+        self.thresholds = self._load_thresholds(config_path)
     
-    def send_notification(self, user_id: str, risk_assessment: Dict[str, Any]) -> bool:
+    def _load_thresholds(self, config_path: str = None) -> Dict[str, Any]:
+        """Load risk thresholds from configuration file."""
+        if not config_path:
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                'config',
+                'alert_thresholds.yaml'
+            )
+        
+        if not os.path.exists(config_path):
+            # Default thresholds if file doesn't exist
+            return {
+                'heart_rate': {
+                    'CRITICAL': {'min': 40, 'max': 180},
+                    'HIGH': {'min': 50, 'max': 160},
+                    'MODERATE': {'min': 55, 'max': 140}
+                },
+                'blood_oxygen': {
+                    'CRITICAL': {'min': 85},
+                    'HIGH': {'min': 90},
+                    'MODERATE': {'min': 94}
+                },
+                'temperature': {
+                    'CRITICAL': {'min': 35, 'max': 39.5},
+                    'HIGH': {'min': 35.5, 'max': 39},
+                    'MODERATE': {'min': 36, 'max': 38.5}
+                }
+            }
+        
+        with open(config_path, 'r') as file:
+            return yaml.safe_load(file)
+    
+    def evaluate_risk(self, data: Dict[str, Any], anomaly_results: Dict[str, Tuple[bool, float]]) -> Dict[str, Any]:
         """
-        Send notifications based on risk assessment.
+        Evaluate health risk based on data and anomaly detection results.
         
         Args:
-            user_id: The ID of the user to notify
-            risk_assessment: Risk assessment results
-            
+            data: The health data
+            anomaly_results: Dictionary mapping data types to (is_anomaly, anomaly_score) tuples
+        
         Returns:
-            bool: True if notification was sent successfully
+            Dict containing risk assessment results
         """
-        risk_level = risk_assessment.get('overall_risk_level', 'LOW')
+        risk_assessment = {
+            'overall_risk_level': 'LOW',
+            'overall_risk_score': 0,
+            'risk_factors': [],
+            'recommendations': []
+        }
         
-        # Skip notifications for low risk
-        if risk_level == 'LOW':
-            self.logger.info(f"No notification needed for user {user_id} with LOW risk level")
-            return True
+        # Evaluate risk for each vital sign
+        risk_factors = []
+        max_risk_level = 'LOW'
+        max_risk_score = 0
         
-        # Get user notification preferences
-        user_prefs = self._get_user_preferences(user_id)
+        if 'heart_rate' in data['data'] and 'heart_rate' in anomaly_results:
+            hr_risk = self._evaluate_heart_rate_risk(data['data']['heart_rate'], anomaly_results['heart_rate'])
+            if hr_risk['risk_level'] != 'LOW':
+                risk_factors.append(hr_risk)
+                if self.RISK_LEVELS[hr_risk['risk_level']] > self.RISK_LEVELS[max_risk_level]:
+                    max_risk_level = hr_risk['risk_level']
+                    max_risk_score = max(max_risk_score, hr_risk['risk_score'])
         
-        # Determine notification channels based on risk level
-        channels = []
-        if risk_level == 'MODERATE':
-            channels = user_prefs.get('moderate_risk_channels', ['app'])
-        elif risk_level == 'HIGH':
-            channels = user_prefs.get('high_risk_channels', ['app', 'email'])
-        elif risk_level == 'CRITICAL':
-            channels = user_prefs.get('critical_risk_channels', ['app', 'email', 'sms'])
+        if 'blood_oxygen' in data['data'] and 'blood_oxygen' in anomaly_results:
+            spo2_risk = self._evaluate_blood_oxygen_risk(data['data']['blood_oxygen'], anomaly_results['blood_oxygen'])
+            if spo2_risk['risk_level'] != 'LOW':
+                risk_factors.append(spo2_risk)
+                if self.RISK_LEVELS[spo2_risk['risk_level']] > self.RISK_LEVELS[max_risk_level]:
+                    max_risk_level = spo2_risk['risk_level']
+                    max_risk_score = max(max_risk_score, spo2_risk['risk_score'])
         
-        # Prepare notification content
-        subject = f"Health Alert: {risk_level} Risk Detected"
-        message = self._format_notification_message(risk_assessment)
+        # Update overall risk assessment
+        risk_assessment['overall_risk_level'] = max_risk_level
+        risk_assessment['overall_risk_score'] = max_risk_score
+        risk_assessment['risk_factors'] = risk_factors
         
-        # Send notifications through each channel
-        success = True
-        for channel in channels:
-            if channel == 'app':
-                channel_success = self._send_app_notification(user_id, subject, message, risk_level)
-            elif channel == 'email':
-                channel_success = self._send_email(user_prefs.get('email'), subject, message)
-            elif channel == 'sms':
-                channel_success = self._send_sms(user_prefs.get('phone'), message)
-            else:
-                self.logger.warning(f"Unknown notification channel: {channel}")
-                channel_success = False
-            
-            success = success and channel_success
+        # Generate recommendations based on risk factors
+        risk_assessment['recommendations'] = self._generate_recommendations(risk_factors)
         
-        return success
+        return risk_assessment
     
-    def _get_user_preferences(self, user_id: str) -> Dict[str, Any]:
-        """Get user notification preferences."""
-        # In a real implementation, this would fetch from a database
-        # For now, return default preferences
+    def _evaluate_heart_rate_risk(self, hr_data: Any, anomaly_result: Tuple[bool, float]) -> Dict[str, Any]:
+        """Evaluate risk level for heart rate data."""
+        is_anomaly, anomaly_score = anomaly_result
+        
+        # Extract heart rate value
+        if isinstance(hr_data, list) and len(hr_data) > 0 and 'value' in hr_data[0]:
+            hr_value = hr_data[0]['value']
+        else:
+            hr_value = hr_data.get('value', 0)
+        
+        # Determine risk level based on thresholds
+        risk_level = 'LOW'
+        for level in ['CRITICAL', 'HIGH', 'MODERATE']:
+            thresholds = self.thresholds.get('heart_rate', {}).get(level, {})
+            min_val = thresholds.get('min', 0)
+            max_val = thresholds.get('max', 300)
+            
+            if hr_value < min_val or hr_value > max_val:
+                risk_level = level
+                break
+        
+        # If anomaly detection flagged it but thresholds didn't, set to MODERATE
+        if is_anomaly and risk_level == 'LOW':
+            risk_level = 'MODERATE'
+        
         return {
-            'moderate_risk_channels': ['app'],
-            'high_risk_channels': ['app', 'email'],
-            'critical_risk_channels': ['app', 'email', 'sms'],
-            'email': f"{user_id}@example.com",
-            'phone': "1234567890"
+            'vital_sign': 'heart_rate',
+            'value': hr_value,
+            'risk_level': risk_level,
+            'risk_score': self.RISK_LEVELS[risk_level] * anomaly_score,
+            'is_anomaly': is_anomaly,
+            'anomaly_score': anomaly_score
         }
     
-    def _format_notification_message(self, risk_assessment: Dict[str, Any]) -> str:
-        """Format the notification message based on risk assessment."""
-        risk_level = risk_assessment.get('overall_risk_level', 'LOW')
-        risk_factors = risk_assessment.get('risk_factors', [])
-        recommendations = risk_assessment.get('recommendations', [])
+    def _evaluate_blood_oxygen_risk(self, spo2_data: Any, anomaly_result: Tuple[bool, float]) -> Dict[str, Any]:
+        """Evaluate risk level for blood oxygen data."""
+        is_anomaly, anomaly_score = anomaly_result
         
-        message = f"Health Alert: {risk_level} Risk Level Detected\n\n"
+        # Extract SpO2 value
+        if isinstance(spo2_data, list) and len(spo2_data) > 0 and 'value' in spo2_data[0]:
+            spo2_value = spo2_data[0]['value']
+        else:
+            spo2_value = spo2_data.get('value', 0)
         
+        # Determine risk level based on thresholds
+        risk_level = 'LOW'
+        for level in ['CRITICAL', 'HIGH', 'MODERATE']:
+            thresholds = self.thresholds.get('blood_oxygen', {}).get(level, {})
+            min_val = thresholds.get('min', 0)
+            
+            if spo2_value < min_val:
+                risk_level = level
+                break
+        
+        # If anomaly detection flagged it but thresholds didn't, set to MODERATE
+        if is_anomaly and risk_level == 'LOW':
+            risk_level = 'MODERATE'
+        
+        return {
+            'vital_sign': 'blood_oxygen',
+            'value': spo2_value,
+            'risk_level': risk_level,
+            'risk_score': self.RISK_LEVELS[risk_level] * anomaly_score,
+            'is_anomaly': is_anomaly,
+            'anomaly_score': anomaly_score
+        }
+    
+    def _generate_recommendations(self, risk_factors: List[Dict[str, Any]]) -> List[str]:
+        """Generate recommendations based on risk factors."""
+        recommendations = []
+        
+        for factor in risk_factors:
+            vital_sign = factor['vital_sign']
+            risk_level = factor['risk_level']
+            value = factor['value']
+            
+            if vital_sign == 'heart_rate':
+                if value > 100 and risk_level in ['MODERATE', 'HIGH', 'CRITICAL']:
+                    recommendations.append("Your heart rate is elevated. Consider resting and practicing deep breathing.")
+                    if risk_level in ['HIGH', 'CRITICAL']:
+                        recommendations.append("If heart rate remains elevated, consult a healthcare provider.")
+                elif value < 60 and risk_level in ['MODERATE', 'HIGH', 'CRITICAL']:
+                    recommendations.append("Your heart rate is lower than normal. Monitor for dizziness or fatigue.")
+                    if risk_level in ['HIGH', 'CRITICAL']:
+                        recommendations.append("If you experience dizziness or weakness, consult a healthcare provider.")
+            
+            elif vital_sign == 'blood_oxygen':
+                if risk_level in ['MODERATE']:
+                    recommendations.append("Your blood oxygen level is slightly below normal. Try deep breathing exercises.")
+                elif risk_level in ['HIGH', 'CRITICAL']:
+                    recommendations.append("Your blood oxygen level is concerning. If you experience shortness of breath, seek medical attention.")
+        
+        # Add general recommendations if any risk factors exist
         if risk_factors:
-            message += "Risk Factors:\n"
-            for factor in risk_factors:
-                message += f"- {factor['vital_sign'].replace('_', ' ').title()}: {factor['value']} "
-                message += f"({factor['risk_level']} risk)\n"
-            message += "\n"
+            recommendations.append("Continue monitoring your vital signs closely.")
         
-        if recommendations:
-            message += "Recommendations:\n"
-            for recommendation in recommendations:
-                message += f"- {recommendation}\n"
-        
-        return message
-    
-    def _send_app_notification(self, user_id: str, subject: str, message: str, risk_level: str) -> bool:
-        """Send in-app notification."""
-        try:
-            # In a real implementation, this would use a push notification service
-            self.logger.info(f"Sending app notification to user {user_id}: {subject}")
-            
-            # Simulate API call to notification service
-            notification_data = {
-                'user_id': user_id,
-                'title': subject,
-                'message': message,
-                'priority': risk_level,
-                'category': 'health_alert'
-            }
-            
-            # Log instead of actually sending
-            self.logger.info(f"App notification data: {notification_data}")
-            
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to send app notification: {e}")
-            return False
-    
-    def _send_email(self, email_address: str, subject: str, message: str) -> bool:
-        """Send email notification."""
-        if not email_address:
-            self.logger.warning("No email address provided")
-            return False
-        
-        try:
-            # In a real implementation, this would use an email service
-            self.logger.info(f"Sending email to {email_address}: {subject}")
-            
-            # Log instead of actually sending
-            self.logger.info(f"Email content: Subject: {subject}, Message: {message}")
-            
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to send email: {e}")
-            return False
-    
-    def _send_sms(self, phone_number: str, message: str) -> bool:
-        """Send SMS notification."""
-        if not phone_number:
-            self.logger
+
+        return recommendations
