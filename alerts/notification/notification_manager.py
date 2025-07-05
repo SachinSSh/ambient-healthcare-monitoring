@@ -160,7 +160,6 @@ class NotificationManager:
     def _send_sms(self, phone_number: str, message: str) -> bool:
         """Send SMS notification."""
         if not phone_number:
-<<<<<<< HEAD
             self.logger
 =======
             self.logger
