@@ -1,0 +1,64 @@
+{
+    "enabled": true,
+    "max_history_size": 100,
+    "channels": {
+        "email": {
+            "enabled": true,
+            "smtp_server": "smtp.gmail.com",
+            "smtp_port": 587,
+            "smtp_username": "your_email@gmail.com",
+            "smtp_password": "your_app_password",
+            "from_email": "your_email@gmail.com",
+            "use_tls": true
+        },
+        "sms": {
+            "enabled": false,
+            "provider": "twilio",
+            "account_sid": "your_account_sid",
+            "auth_token": "your_auth_token",
+            "from_number": "+1234567890"
+        },
+        "push": {
+            "enabled": false,
+            "provider": "firebase",
+            "api_key": "your_firebase_api_key",
+            "project_id": "your_firebase_project_id"
+        }
+    },
+    "notification_levels": {
+        "INFO": {
+            "channels": [
+                "email"
+            ],
+            "color": "#17a2b8"
+        },
+        "WARNING": {
+            "channels": [
+                "email",
+                "push"
+            ],
+            "color": "#ffc107"
+        },
+        "ALERT": {
+            "channels": [
+                "email",
+                "sms",
+                "push"
+            ],
+            "color": "#dc3545"
+        }
+    },
+    "user_preferences": {
+        "default": {
+            "channels": [
+                "email"
+            ],
+            "quiet_hours": {
+                "enabled": false,
+                "start": "22:00",
+                "end": "07:00",
+                "timezone": "America/New_York"
+            }
+        }
+    }
+}
