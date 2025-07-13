@@ -1,0 +1,51 @@
+{
+    "app_name": "Ambient Healthcare Monitoring System",
+    "version": "0.1.0",
+    "data_collection": {
+        "polling_interval": 60,
+        "batch_size": 100,
+        "sensors": {
+            "wearable": true,
+            "environmental": true,
+            "medical_devices": true
+        }
+    },
+    "data_processing": {
+        "preprocessing": true,
+        "feature_extraction": true,
+        "anomaly_detection": true
+    },
+    "data_storage": {
+        "db_path": "data/db/health_data.db",
+        "backup_interval": 86400
+    },
+    "models": {
+        "diabetes_monitor": {
+            "enabled": true,
+            "model_params": {
+                "n_estimators": 100,
+                "max_depth": 10,
+                "random_state": 42
+            },
+            "target_min": 70,
+            "target_max": 180
+        },
+        "infection_detector": {
+            "enabled": true,
+            "model_params": {
+                "n_estimators": 100,
+                "max_depth": 3,
+                "learning_rate": 0.1,
+                "random_state": 42
+            }
+        }
+    },
+    "security": {
+        "encryption_enabled": true,
+        "authentication_required": true
+    },
+    "notifications": {
+        "enabled": true,
+        "default_channels": ["email"]
+    }
+}
