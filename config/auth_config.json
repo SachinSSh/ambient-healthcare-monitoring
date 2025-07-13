@@ -1,0 +1,10 @@
+{
+    "secret_key": "secret_key",
+    "token_expiry_hours": 24,
+    "password_min_length": 8,
+    "require_special_chars": true,
+    "require_numbers": true,
+    "require_uppercase": true,
+    "max_login_attempts": 5,
+    "lockout_duration_minutes": 30
+}
